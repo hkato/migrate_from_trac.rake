@@ -3,7 +3,7 @@ services:
   redmine:
     container_name: ${REDMINE:-redmine}
     build: .
-    restart: always
+    # restart: always
     ports:
       - 80:3000
     depends_on:
@@ -28,7 +28,7 @@ services:
   mysql:
     container_name: ${REDMINE_DB_MYSQL:-mysql}
     image: mysql:5.7.30
-    restart: always
+    # restart: always
     ports:
       - 3306:3306
     environment:
@@ -43,7 +43,7 @@ services:
   memcached:
     container_name: ${REDMINE_MEMCACHED:-memcached}
     image: memcached:1.6.6
-    restart: always
+    # restart: always
 volumes:
   mysql:
     name: ${REDMINE_DB_MYSQL:-mysql}
