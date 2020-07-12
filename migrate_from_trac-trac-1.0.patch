@@ -1,0 +1,183 @@
+--- migrate_from_trac.rake-r19553	2020-07-11 15:37:54.000000000 +0900
++++ migrate_from_trac.rake	2020-07-11 21:34:59.000000000 +0900
+@@ -17,6 +17,7 @@
+ 
+ require 'active_record'
+ require 'pp'
++require 'digest/sha1'
+ 
+ namespace :redmine do
+   desc 'Trac migration script'
+@@ -71,6 +72,7 @@
+       class ::Time
+         class << self
+           alias :real_now :now
++          alias :real_at :at
+           def now
+             real_now - @fake_diff.to_i
+           end
+@@ -80,9 +82,24 @@
+             @fake_diff = 0
+            res
+           end
++          def at(time)
++            # In Trac ticket #6466, timestamps
++            # were changed from seconds since the epoch
++            # to microseconds since the epoch.  The
++            # Trac database version was bumped to 23 for this.
++            if TracMigrate.database_version > 22
++               Time.real_at(time / 1000000)
++            else
++               Time.real_at(time)
++            end
++          end
+         end
+       end
+ 
++      class TracSystem < ActiveRecord::Base
++        self.table_name = :system
++      end
++      
+       class TracComponent < ActiveRecord::Base
+         self.table_name = :component
+       end
+@@ -118,7 +135,7 @@
+ 
+       class TracAttachment < ActiveRecord::Base
+         self.table_name = :attachment
+-        set_inheritance_column :none
++        self.inheritance_column = :none
+ 
+         def time; Time.at(read_attribute(:time)) end
+ 
+@@ -150,27 +167,38 @@
+         end
+ 
+       private
++
++        def sha1(s)                                                                           
++          return Digest::SHA1.hexdigest(s)                                                  
++        end
++                                                                                           
++        def get_path(ticket_id, filename)                                                     
++          t = sha1(ticket_id.to_s)                                                          
++          f = sha1(filename)                                                                
++          ext = File.extname(filename)                                                      
++          a = [ t[0..2], "/", t, "/", f, ext ]                                              
++          return a.join("")                                                                 
++        end
++
+         def trac_fullpath
+-          attachment_type = read_attribute(:type)
+-          #replace exotic characters with their hex representation to avoid invalid filenames
+-          trac_file = filename.gsub( /[^a-zA-Z0-9\-_\.!~*']/n ) do |x|
+-            codepoint = x.codepoints.to_a[0]
+-            sprintf('%%%02x', codepoint)
+-          end
+-          "#{TracMigrate.trac_attachments_directory}/#{attachment_type}/#{id}/#{trac_file}"
++          attachment_type = read_attribute(:type)                                             
++          ticket_id = read_attribute(:id)                                                     
++          filename  = read_attribute(:filename)                                               
++          path = get_path(id, filename)                                                
++          "#{TracMigrate.trac_attachments_directory}/#{attachment_type}/#{path}"
+         end
+       end
+ 
+       class TracTicket < ActiveRecord::Base
+         self.table_name = :ticket
+-        set_inheritance_column :none
++        self.inheritance_column = :none
+ 
+         # ticket changes: only migrate status changes and comments
+         has_many :ticket_changes, :class_name => "TracTicketChange", :foreign_key => :ticket
+         has_many :customs, :class_name => "TracTicketCustom", :foreign_key => :ticket
+ 
+         def attachments
+-          TracMigrate::TracAttachment.all(:conditions => ["type = 'ticket' AND id = ?", self.id.to_s])
++          TracMigrate::TracAttachment.where("type = 'ticket' AND id = :id", id: self.id.to_s)
+         end
+ 
+         def ticket_type
+@@ -210,7 +238,7 @@
+ 
+       class TracWikiPage < ActiveRecord::Base
+         self.table_name = :wiki
+-        set_primary_key :name
++        self.primary_key = 'name'
+ 
+         def self.columns
+           # Hides readonly Trac field to prevent clash with AR readonly? method (Rails 2.0)
+@@ -218,7 +246,7 @@
+         end
+ 
+         def attachments
+-          TracMigrate::TracAttachment.all(:conditions => ["type = 'wiki' AND id = ?", self.id.to_s])
++          TracMigrate::TracAttachment.where("type = 'wiki' AND id = :id", id: self.id.to_s)
+         end
+ 
+         def time; Time.at(read_attribute(:time)) end
+@@ -376,6 +404,8 @@
+         # Quick database test
+         TracComponent.count
+ 
++        lookup_database_version
++        print "Trac database version is: ", database_version, "\n" 
+         migrated_components = 0
+         migrated_milestones = 0
+         migrated_tickets = 0
+@@ -419,7 +449,7 @@
+           p.save
+ 
+           v = Version.new :project => @target_project,
+-                          :name => encode(milestone.name[0, limit_for(Version, 'name')]),
++                          :name => encode(milestone.name),
+                           :description => nil,
+                           :wiki_page_title => milestone.name.to_s,
+                           :effective_date => milestone.completed
+@@ -469,7 +499,7 @@
+           print '.'
+           STDOUT.flush
+           i = Issue.new :project => @target_project,
+-                          :subject => encode(ticket.summary[0, limit_for(Issue, 'subject')]),
++                          :subject => encode(ticket.summary),
+                           :description => convert_wiki_text(encode(ticket.description)),
+                           :priority => PRIORITY_MAPPING[ticket.priority] || DEFAULT_PRIORITY,
+                           :created_on => ticket.time
+@@ -595,10 +625,10 @@
+         puts "Components:      #{migrated_components}/#{TracComponent.count}"
+         puts "Milestones:      #{migrated_milestones}/#{TracMilestone.count}"
+         puts "Tickets:         #{migrated_tickets}/#{TracTicket.count}"
+-        puts "Ticket files:    #{migrated_ticket_attachments}/" + TracAttachment.count(:conditions => {:type => 'ticket'}).to_s
++        puts "Ticket files:    #{migrated_ticket_attachments}/" + TracAttachment.where(type: 'ticket').count().to_s
+         puts "Custom values:   #{migrated_custom_values}/#{TracTicketCustom.count}"
+         puts "Wiki edits:      #{migrated_wiki_edits}/#{wiki_edit_count}"
+-        puts "Wiki files:      #{migrated_wiki_attachments}/" + TracAttachment.count(:conditions => {:type => 'wiki'}).to_s
++        puts "Wiki files:      #{migrated_wiki_attachments}/" + TracAttachment.where(type: 'wiki').count().to_s
+       end
+ 
+       def self.limit_for(klass, attribute)
+@@ -609,6 +639,15 @@
+         @charset = charset
+       end
+ 
++      def self.lookup_database_version
++        f = TracSystem.find_by_name("database_version")
++        @@database_version = f.value.to_i
++      end
++
++      def self.database_version
++        @@database_version
++      end
++      
+       def self.set_trac_directory(path)
+         @@trac_directory = path
+         raise "This directory doesn't exist!" unless File.directory?(path)
+@@ -664,7 +703,7 @@
+       mattr_reader :trac_directory, :trac_adapter, :trac_db_host, :trac_db_port, :trac_db_name, :trac_db_schema, :trac_db_username, :trac_db_password
+ 
+       def self.trac_db_path; "#{trac_directory}/db/trac.db" end
+-      def self.trac_attachments_directory; "#{trac_directory}/attachments" end
++      def self.trac_attachments_directory; "#{trac_directory}/files/attachments" end
+ 
+       def self.target_project_identifier(identifier)
+         project = Project.find_by_identifier(identifier)

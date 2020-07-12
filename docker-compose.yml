@@ -1,0 +1,49 @@
+version: '3.7'
+services:
+  redmine:
+    container_name: ${REDMINE:-redmine}
+    build: .
+    restart: always
+    ports:
+      - 80:3000
+    depends_on:
+      - ${REDMINE_DB_MYSQL:-mysql}
+      - ${REDMINE_MEMCACHED:-memcached}
+    environment:
+      TZ: ${TZ}
+      REDMINE_DB_MYSQL: ${REDMINE_DB_MYSQL:-mysql}
+      REDMINE_DB_DATABASE: ${REDMINE_DB_DATABASE}
+      REDMINE_DB_USERNAME: ${REDMINE_DB_USERNAME}
+      REDMINE_DB_PASSWORD: ${REDMINE_DB_PASSWORD}
+      REDMINE_DB_ENCODING: ${REDMINE_DB_ENCODING:-utf8mb4}
+    volumes:
+      - ${PWD}/srv/redmine/config/additional_environment.rb:/usr/src/redmine/config/additional_environment.rb
+      - ${PWD}/srv/redmine/config/configuration.yml:/usr/src/redmine/config/configuration.yml
+      - ${PWD}/srv/redmine/Gemfile.local:/usr/src/redmine/Gemfile.local
+      - ${PWD}/srv/redmine/files:/usr/src/redmine/files:z
+      - ${PWD}/srv/redmine/log:/usr/src/redmine/log:Z
+      - ${PWD}/srv/redmine/plugins:/usr/src/redmine/plugins
+      - ${PWD}/srv/redmine/public/themes:/usr/src/redmine/public/themes
+      - ${PWD}/srv/trac:/trac
+  mysql:
+    container_name: ${REDMINE_DB_MYSQL:-mysql}
+    image: mysql:5.7.30
+    restart: always
+    ports:
+      - 3306:3306
+    environment:
+      TZ: ${TZ}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${REDMINE_DB_DATABASE}
+      MYSQL_USER: ${REDMINE_DB_USERNAME}
+      MYSQL_PASSWORD: ${REDMINE_DB_PASSWORD}
+    volumes:
+      - ${PWD}/srv/redmine-mysql:/var/lib/mysql
+    command: mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_bin
+  memcached:
+    container_name: ${REDMINE_MEMCACHED:-memcached}
+    image: memcached:1.6.6
+    restart: always
+volumes:
+  mysql:
+    name: ${REDMINE_DB_MYSQL:-mysql}
